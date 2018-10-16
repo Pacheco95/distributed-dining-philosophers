@@ -19,14 +19,16 @@ public class Philosopher implements Runnable, Serializable {
     transient private Socket rightForkServerConnection;
 
     transient private ObjectOutputStream rightForkServerOutputStream;
+
+    transient private boolean acquiredForks[];
     transient private CountDownLatch forksLatch;
 
     private Philosopher(String name, String mainServerAddress, int mainServerPort) {
         this.name = name;
         this.mainServerAddress = mainServerAddress;
         this.mainServerPort = mainServerPort;
+        acquiredForks = new boolean[2];
         forksLatch = new CountDownLatch(2);
-
         connectToMainServer();
     }
 
@@ -47,7 +49,7 @@ public class Philosopher implements Runnable, Serializable {
             ObjectInputStream mainServerInputStream = new ObjectInputStream(mainServerConnection.getInputStream());
             Message message;
             while ((message = (Message) mainServerInputStream.readObject()) != null) {
-                System.out.println(message);
+                System.err.println(message);
                 switch (message.getKind()) {
                     case START:
                         new Thread(() -> listenForkServer(leftForkServerConnection), "Thread-LeftForkServer").start();
@@ -72,12 +74,19 @@ public class Philosopher implements Runnable, Serializable {
         try {
             String leftForkServerAddress = (String) connectionInfo[0];
             int leftForkServerPort = (int) connectionInfo[1];
-            leftForkServerConnection = new Socket(leftForkServerAddress, leftForkServerPort);
-            leftForkServerOutputStream = new ObjectOutputStream(leftForkServerConnection.getOutputStream());
-
             String rightForkServerAddress = (String) connectionInfo[2];
             int rightForkServerPort = (int) connectionInfo[3];
+
+            if (leftForkServerPort == rightForkServerPort) throw new AssertionError();
+
+            System.err.println(String.format("Connecting to left fork: %s at %d", leftForkServerAddress, leftForkServerPort));
+            leftForkServerConnection = new Socket(leftForkServerAddress, leftForkServerPort);
+            System.err.println("Connection done!");
+            leftForkServerOutputStream = new ObjectOutputStream(leftForkServerConnection.getOutputStream());
+
+            System.err.println(String.format("Connecting to right fork: %s at %d", rightForkServerAddress, rightForkServerPort));
             rightForkServerConnection = new Socket(rightForkServerAddress, rightForkServerPort);
+            System.err.println("Connection done!");
             rightForkServerOutputStream = new ObjectOutputStream(rightForkServerConnection.getOutputStream());
         } catch (IOException e) {
             e.printStackTrace();
@@ -86,11 +95,19 @@ public class Philosopher implements Runnable, Serializable {
 
     private void listenForkServer(Socket forkServerConnection) {
         ObjectInputStream in = null;
+        int forkIndex = -1;
+        String forkSide = "";
         try {
-            if (forkServerConnection == leftForkServerConnection)
+            if (forkServerConnection == leftForkServerConnection) {
                 in = new ObjectInputStream(leftForkServerConnection.getInputStream());
-            else
+                forkIndex = 0;
+                forkSide = "Left";
+            }
+            else {
                 in = new ObjectInputStream(rightForkServerConnection.getInputStream());
+                forkIndex = 1;
+                forkSide = "Right";
+            }
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -103,10 +120,19 @@ public class Philosopher implements Runnable, Serializable {
                         new Thread(this).start();
                         break;
                     case TEXT:
-                        System.out.println(message);
+                        System.err.println(message);
                         break;
                     case FORK_ACQUIRED:
-                        synchronized (this) { forksLatch.countDown(); }
+                        acquiredForks[forkIndex] = true;
+                        System.err.println(forkSide + " fork acquired!");
+                        synchronized (this.forksLatch) { forksLatch.countDown(); }
+                        break;
+                    case RELEASE_FORK:
+                        acquiredForks[forkIndex] = false;
+                        break;
+                    case FORK_IN_USE:
+                        System.err.println(forkSide + " fork in use!");
+                        synchronized (this.forksLatch) { forksLatch.countDown(); }
                         break;
                 }
             }
@@ -115,13 +141,13 @@ public class Philosopher implements Runnable, Serializable {
         }
     }
 
-    private void sendMessageToForkServer(ObjectOutputStream outputStream, Message message) {
-        sendMessage(outputStream, message);
+    private void sendMessageToForkServer(ObjectOutputStream errputStream, Message message) {
+        sendMessage(errputStream, message);
     }
 
-    private void sendMessage(ObjectOutputStream outputStream, Message message) {
+    private void sendMessage(ObjectOutputStream errputStream, Message message) {
         try {
-            outputStream.writeObject(message);
+            errputStream.writeObject(message);
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -131,45 +157,66 @@ public class Philosopher implements Runnable, Serializable {
     public void run() {
         //noinspection InfiniteLoopStatement
         while (true) {
-            System.out.println("----------------------------------------------------------");
+            System.err.println("----------------------------------------------------------");
             think();
-            requestForks();
             // Block until all forks are acquired
-            try { forksLatch.await(); } catch (InterruptedException e) { e.printStackTrace(); }
-            System.out.println("Forks acquired!");
+            requestForks();
             eat();
             giveBackForks();
         }
     }
 
     private void eat() {
-        System.out.println(name + " is eating ...");
+        System.err.println(name + " is eating ...");
         try {
             int MAX_EAT_TIME = 5000;
             Thread.sleep((long) (Math.random() * MAX_EAT_TIME)); } catch (InterruptedException ignored) {}
-        System.out.println(name + " ends eating ...");
+        System.err.println(name + " ends eating ...");
     }
 
     private void giveBackForks() {
-        Message releaseForkMessage = new Message(this, Message.Kind.FORK_RELEASED);
+        Message releaseForkMessage = new Message(this, Message.Kind.RELEASE_FORK);
         sendMessageToForkServer(leftForkServerOutputStream, releaseForkMessage);
         sendMessageToForkServer(rightForkServerOutputStream, releaseForkMessage);
         forksLatch = new CountDownLatch(2);
     }
 
     private void requestForks() {
-        System.out.println(name + " is requesting forks ...");
         Message requestForkMessage = new Message(this, Message.Kind.REQUEST_FORK);
-        sendMessageToForkServer(leftForkServerOutputStream, requestForkMessage);
-        sendMessageToForkServer(rightForkServerOutputStream, requestForkMessage);
+        Message releaseForkMessage = new Message(Message.Kind.RELEASE_FORK);
+
+        while (true) {
+            System.err.println(name + " is requesting forks ...");
+            sendMessageToForkServer(leftForkServerOutputStream, requestForkMessage);
+            sendMessageToForkServer(rightForkServerOutputStream, requestForkMessage);
+            try {
+                forksLatch.await();
+                Thread.sleep(50);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+            if (acquiredForks[0] && !acquiredForks[1]) {
+                sendMessageToForkServer(leftForkServerOutputStream, releaseForkMessage);
+                System.err.println("Giving back left fork ...");
+            }
+            else if (!acquiredForks[0] && acquiredForks[1]){
+                sendMessageToForkServer(rightForkServerOutputStream, releaseForkMessage);
+                System.err.println("Giving back right fork ...");
+            }
+            else if (acquiredForks[0] && acquiredForks[1]) return;
+            else try {
+                System.err.println("Waiting a random time ...");
+                Thread.sleep((long) (Math.random() * 1000 + 100));
+            } catch (InterruptedException e) { e.printStackTrace(); }
+        }
     }
 
     private void think() {
-        System.out.println(name + " is thinking ...");
+        System.err.println(name + " is thinking ...");
         try {
             int MAX_THINK_TIME = 5000;
             Thread.sleep((long) (Math.random() * MAX_THINK_TIME)); } catch (InterruptedException ignored) {}
-        System.out.println(name + " woke up ...");
+        System.err.println(name + " woke up ...");
     }
 
     String getName() {

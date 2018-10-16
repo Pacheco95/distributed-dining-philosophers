@@ -29,6 +29,8 @@ public class Fork implements Serializable {
     transient private ObjectInputStream rightIn;
     transient private ObjectOutputStream rightOut;
 
+    transient private boolean acquired;
+
     /**
      * Connect to main server and starts the fork server.
      * @param mainServerHostname address of the main server
@@ -92,9 +94,11 @@ public class Fork implements Serializable {
      * @param philosopherConnection which philosopher to handle
      */
     private void listenPhilosopher(Socket philosopherConnection) {
+        ObjectInputStream in = null;
+        ObjectOutputStream out = null;
         try {
-            ObjectInputStream in = new ObjectInputStream(philosopherConnection.getInputStream());
-            ObjectOutputStream out = new ObjectOutputStream(philosopherConnection.getOutputStream());
+            in = new ObjectInputStream(philosopherConnection.getInputStream());
+            out = new ObjectOutputStream(philosopherConnection.getOutputStream());
             if (philosopherConnection == leftConn) {
                 leftIn = in;
                 leftOut = out;
@@ -104,19 +108,36 @@ public class Fork implements Serializable {
                 rightOut = out;
                 System.out.println("Right philosopher connected!");
             }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
 
+        assert in != null;
+        assert out != null;
+
+        try {
             Message message;
             while ((message = (Message) in.readObject()) != null) {
                 System.out.println(message);
                 switch (message.getKind()) {
                     case REQUEST_FORK:
-                        Thread.sleep(3000);
-                        out.writeObject(new Message(Message.Kind.FORK_ACQUIRED));
+                        // TODO check
+                        synchronized (this) {
+                            if (!acquired) {
+                                acquired = true;
+                                out.writeObject(new Message(Message.Kind.FORK_ACQUIRED));
+                            } else {
+                                out.writeObject(new Message(Message.Kind.FORK_IN_USE));
+                            }
+                        }
+                        break;
+                    case RELEASE_FORK:
+                        synchronized (this) { acquired = false; }
                         break;
                 }
             }
 
-        } catch (IOException | ClassNotFoundException | InterruptedException e) {
+        } catch (IOException | ClassNotFoundException e) {
             e.printStackTrace();
         }
     }

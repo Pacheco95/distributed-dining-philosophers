@@ -14,14 +14,14 @@ public class MainServer {
     private Map<Socket, Pair<Fork, Pair<ObjectInputStream, ObjectOutputStream>>> forks;
 
 
-    private MainServer(int port) {
+    private MainServer(int port, int numberOfPhilosophers) {
         philosophers = new HashMap<>();
         forks = new HashMap<>();
 
         try {
             ServerSocket connection = new ServerSocket(port);
 
-            for (int i = 0; i < 2*5; i++) {
+            for (int i = 0; i < 2*numberOfPhilosophers; i++) {
                 Socket conn = connection.accept();
                 ObjectInputStream in = new ObjectInputStream(conn.getInputStream());
                 ObjectOutputStream out = new ObjectOutputStream(conn.getOutputStream());
@@ -106,6 +106,6 @@ public class MainServer {
     }
 
     public static void main(String[] args) {
-        new MainServer(Integer.parseInt(args[0]));
+        new MainServer(Integer.parseInt(args[0]), Integer.parseInt(args[1]));
     }
 }
