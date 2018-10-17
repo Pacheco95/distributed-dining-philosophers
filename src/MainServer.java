@@ -39,9 +39,8 @@ public class MainServer {
             }
 
             setupTopology();
-
             startDining();
-
+            // TODO stop dining
             Thread.currentThread().join();
         } catch (IOException | ClassNotFoundException | InterruptedException e) {
             e.printStackTrace();
@@ -50,16 +49,7 @@ public class MainServer {
     }
 
     private void startDining() {
-        Message setupMessage = new Message(Message.Kind.SETUP);
         Message startMessage = new Message(Message.Kind.START);
-
-        forks.forEach((socket, data) -> {
-            try {
-                data.getValue().getValue().writeObject(setupMessage);
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-        });
 
         forks.forEach((socket, data) -> {
             try {

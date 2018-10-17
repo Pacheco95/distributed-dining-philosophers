@@ -9,7 +9,7 @@ public class Message implements Serializable {
     private Object message;
     private Kind kind;
 
-    public enum Kind {FORK_ACQUIRED, FORK_IN_USE, RELEASE_FORK, REQUEST_FORK, SETUP, START, STOP, TEXT}
+    public enum Kind {FORK_ACQUIRED, FORK_IN_USE, RELEASE_FORK, REQUEST_FORK, SETUP, START, STOP}
 
     Message(Kind kind) {
         this("", kind);
